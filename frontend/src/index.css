@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Theme: Dark (default) ──────────────────────────────────────────────── */
+:root {
+  --t-bg:      #262421;
+  --t-surf:    #1e1d1b;
+  --t-surf2:   #302e2c;
+  --t-surf3:   #3d3b39;
+  --t-border:  rgba(255,255,255,0.08);
+  --t-text:    #ffffff;
+  --t-text2:   #d1d5db;
+  --t-muted:   #6b7280;
+  --t-green:   #5a9e2e;
+  --t-green-h: #4d8a27;
+  --t-green-d: #3d7020;
+  /* Chart.js */
+  --c-bg:      #1e1d1b;
+  --c-line:    #5db946;
+  --c-grid:    rgba(255,255,255,0.06);
+  --c-tick:    #6b7280;
+  --c-tip:     #1e1d1b;
+  --c-tip-b:   #555555;
+  --c-ttl:     #9ca3af;
+  --c-body:    #e2e8f0;
+  /* Scrollbar */
+  --sb-track:  #1e1d1b;
+  --sb-thumb:  #3d3b39;
+  --sb-thumbh: #555351;
+}
+
+/* ── Theme: Light ────────────────────────────────────────────────────────── */
+:root.light {
+  --t-bg:      #f0ede8;
+  --t-surf:    #fafaf7;
+  --t-surf2:   #ece9e3;
+  --t-surf3:   #e2dfd9;
+  --t-border:  rgba(0,0,0,0.10);
+  --t-text:    #1a1a1a;
+  --t-text2:   #374151;
+  --t-muted:   #6b7280;
+  --t-green:   #4d8a20;
+  --t-green-h: #3d7018;
+  --t-green-d: #2f5a12;
+  /* Chart.js */
+  --c-bg:      #fafaf7;
+  --c-line:    #4d8a20;
+  --c-grid:    rgba(0,0,0,0.06);
+  --c-tick:    #6b7280;
+  --c-tip:     #ffffff;
+  --c-tip-b:   #d1d5db;
+  --c-ttl:     #6b7280;
+  --c-body:    #1f2937;
+  /* Scrollbar */
+  --sb-track:  #ece9e3;
+  --sb-thumb:  #c9c5be;
+  --sb-thumbh: #b0ac a5;
+}
+
+body {
+  background-color: var(--t-bg);
+  color: var(--t-text);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar              { width: 5px; height: 5px; }
+::-webkit-scrollbar-track        { background: var(--sb-track); }
+::-webkit-scrollbar-thumb        { background: var(--sb-thumb); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover  { background: var(--sb-thumbh); }
+
+/* ── Classification badge pulse ──────────────────────────────────────────── */
+@keyframes blunder-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+.badge-blunder { animation: blunder-pulse 2s ease-in-out infinite; }
