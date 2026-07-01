@@ -1,20 +1,26 @@
 /**
- * Vertical evaluation bar.
- * White fills from the bottom, black from the top.
- * evalCp: centipawns from white's perspective (+ve = white better).
+ * Vertical evaluation bar using the chess.com Expected Points (win probability) model.
+ * White fills from the bottom; the split is driven by win probability, not linear clamping.
+ * evalCp: centipawns from White's perspective (+ve = White better).
  */
+
+const _K = 0.00368208;
+
+function _winProb(cp) {
+  const c = Math.max(-5000, Math.min(5000, cp));
+  return 100 / (1 + Math.exp(-_K * c));
+}
+
 export default function EvalBar({ evalCp = 0, orientation = 'white', height = '100%' }) {
-  const clamped = Math.max(-1000, Math.min(1000, evalCp));
-  // percentage of the bar that is WHITE
-  const whitePct = ((clamped + 1000) / 2000) * 100;
+  const isMate   = Math.abs(evalCp) >= 99_000;
+  const whitePct = isMate ? (evalCp > 0 ? 99.5 : 0.5) : _winProb(evalCp);
 
-  // When the board is flipped (black on bottom), white pct goes on top
-  const topPct   = orientation === 'white' ? 100 - whitePct : whitePct;
-  const btmPct   = 100 - topPct;
+  // When board is flipped (black on bottom), white portion goes on top
+  const topPct = orientation === 'white' ? 100 - whitePct : whitePct;
+  const btmPct = 100 - topPct;
 
-  const isMate = Math.abs(evalCp) >= 99_000;
-  const abs    = Math.abs(evalCp);
-  const label  = isMate
+  const abs   = Math.abs(evalCp);
+  const label = isMate
     ? `M${evalCp > 0 ? '' : '-'}${abs - 99_000 || 1}`
     : Math.abs(evalCp / 100).toFixed(1);
 

@@ -11,23 +11,25 @@ function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-export default function EvalGraph({ moves = [], initialEval = 0, currentIndex = -1, onSelect }) {
+export default function EvalGraph({ moves = [], initialWinProb = 0.5, currentIndex = -1, onSelect }) {
   const chartRef = useRef(null);
 
-  const evals  = [initialEval, ...moves.map(m => m.eval)];
-  const labels = ['Start', ...moves.map(m =>
+  // win_prob is 0-1 (White's win probability); 0.5 = equal
+  const winProbs = [initialWinProb, ...moves.map(m => m.win_prob ?? 0.5)];
+  const labels   = ['Start', ...moves.map(m =>
     m.player === 'white' ? `${m.move_number}. ${m.move}` : `${m.move_number}… ${m.move}`,
   )];
 
   function gradient(ctx, chartArea) {
     const { top, bottom } = chartArea;
-    const midRatio = Math.max(0, Math.min(1, (1 - (0 + 10) / 20)));
-    const midY = top + (bottom - top) * midRatio;
+    // win_prob 0.5 (equal) sits at the vertical midpoint of the chart
+    const midY = top + (bottom - top) * 0.5;
+    const stop = (midY - top) / (bottom - top);
     const g = ctx.createLinearGradient(0, top, 0, bottom);
-    g.addColorStop(0,                              'rgba(93,185,70,0.35)');
-    g.addColorStop((midY - top) / (bottom - top), 'rgba(93,185,70,0.05)');
-    g.addColorStop((midY - top) / (bottom - top), 'rgba(0,0,0,0.05)');
-    g.addColorStop(1,                              'rgba(0,0,0,0.40)');
+    g.addColorStop(0,    'rgba(93,185,70,0.35)');
+    g.addColorStop(stop, 'rgba(93,185,70,0.05)');
+    g.addColorStop(stop, 'rgba(0,0,0,0.05)');
+    g.addColorStop(1,    'rgba(0,0,0,0.40)');
     return g;
   }
 
@@ -36,11 +38,11 @@ export default function EvalGraph({ moves = [], initialEval = 0, currentIndex = 
   const data = {
     labels,
     datasets: [{
-      data: evals,
+      data: winProbs,
       borderColor: lineColor,
       borderWidth: 2,
-      pointRadius: evals.map((_, i) => i - 1 === currentIndex ? 5 : 0),
-      pointBackgroundColor: evals.map((_, i) => i - 1 === currentIndex ? '#facc15' : lineColor),
+      pointRadius: winProbs.map((_, i) => i - 1 === currentIndex ? 5 : 0),
+      pointBackgroundColor: winProbs.map((_, i) => i - 1 === currentIndex ? '#facc15' : lineColor),
       pointHoverRadius: 4,
       tension: 0.35,
       fill: true,
@@ -59,12 +61,13 @@ export default function EvalGraph({ moves = [], initialEval = 0, currentIndex = 
     scales: {
       x: { display: false },
       y: {
-        min: -10, max: 10,
+        min: 0,
+        max: 1,
         grid:  { color: cssVar('--c-grid') || 'rgba(255,255,255,0.06)' },
         ticks: {
           color:    cssVar('--c-tick') || '#6b7280',
-          callback: v => v === 0 ? '0' : v > 0 ? `+${v}` : `${v}`,
-          stepSize: 5,
+          callback: v => `${Math.round(v * 100)}%`,
+          stepSize: 0.25,
         },
         border: { color: cssVar('--t-border') || 'rgba(255,255,255,0.08)' },
       },
@@ -75,7 +78,11 @@ export default function EvalGraph({ moves = [], initialEval = 0, currentIndex = 
         callbacks: {
           label: ctx => {
             const v = ctx.parsed.y;
-            return v >= 0 ? `White +${v.toFixed(2)}` : `Black +${Math.abs(v).toFixed(2)}`;
+            const wpct = Math.round(v * 100);
+            const bpct = 100 - wpct;
+            return wpct >= 50
+              ? `White: ${wpct}%  ·  Black: ${bpct}%`
+              : `Black: ${bpct}%  ·  White: ${wpct}%`;
           },
         },
         backgroundColor: cssVar('--c-tip')   || '#1e1d1b',

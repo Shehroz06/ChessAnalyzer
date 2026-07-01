@@ -73,7 +73,7 @@ export async function playMove({ fen, depth = 15, elo = null }) {
   return data;
 }
 
-export async function evaluate({ fen, depth = 12 }) {
+export async function evaluate({ fen, depth = 11 }) {
   const { data } = await http.post('/evaluate', { fen, depth });
   return data;
 }

@@ -29,7 +29,7 @@ class PlayMoveRequest(BaseModel):
 
 class EvalRequest(BaseModel):
     fen: str
-    depth: int = 12
+    depth: int = 11
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

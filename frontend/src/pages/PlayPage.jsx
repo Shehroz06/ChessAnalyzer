@@ -10,7 +10,7 @@ import { uciToSquares } from '../utils/chess.js';
 import { useBoardSize } from '../utils/useBoardSize.js';
 
 async function quickEval(fen, cb) {
-  try { const { eval_cp } = await evaluate({ fen, depth: 12 }); cb(eval_cp); }
+  try { const { eval_cp } = await evaluate({ fen, depth: 11 }); cb(eval_cp); }
   catch { /* non-critical */ }
 }
 
@@ -235,7 +235,8 @@ export default function PlayPage() {
       <div className="flex flex-col items-center gap-2 flex-shrink-0">
 
         <PlayerLabel
-          name={selectedElo.elo ? `Computer · ${selectedElo.label}` : 'Computer · Master'}
+          name={selectedElo.label}
+          isComputer
           color={compColor} thinking={thinking} width={boardSize}
         />
 
@@ -356,7 +357,7 @@ export default function PlayPage() {
               <p className="text-lg font-bold" style={{ color: 'var(--t-text)' }}>{result}</p>
             </div>
             <button
-              onClick={() => navigate('/analyze', { state: { pgn: gameRef.current.pgn(), depth: 12 } })}
+              onClick={() => navigate('/analyze', { state: { pgn: gameRef.current.pgn(), depth: 11 } })}
               className="w-full py-2.5 text-sm font-medium rounded-lg text-white transition-colors"
               style={{ background: 'var(--t-green)' }}
               onMouseEnter={e => e.currentTarget.style.background = 'var(--t-green-h)'}
@@ -438,18 +439,29 @@ export default function PlayPage() {
 
 /* ── sub-components ──────────────────────────────────────────────────────── */
 
-function PlayerLabel({ name, color, thinking = false, width }) {
+/* avatar colour per difficulty level */
+const ELO_AVATAR_COLOR = {
+  Beginner:     { bg: '#22c55e', fg: '#fff' },
+  Casual:       { bg: '#84cc16', fg: '#fff' },
+  Intermediate: { bg: '#eab308', fg: '#fff' },
+  Advanced:     { bg: '#f97316', fg: '#fff' },
+  Expert:       { bg: '#ef4444', fg: '#fff' },
+  Master:       { bg: '#8b5cf6', fg: '#fff' },
+};
+
+function PlayerLabel({ name, color, thinking = false, width, isComputer = false }) {
   const initial = (name ?? '?')[0].toUpperCase();
+  const avatarStyle = isComputer
+    ? { background: ELO_AVATAR_COLOR[name]?.bg ?? '#6b7280', color: ELO_AVATAR_COLOR[name]?.fg ?? '#fff' }
+    : { background: color === 'white' ? '#e5e7eb' : '#374151', color: color === 'white' ? '#1f2937' : '#f9fafb' };
+
   return (
     <div className="flex items-center gap-2.5 px-1" style={{ width }}>
       <div
         className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
-        style={{
-          background: color === 'white' ? '#e5e7eb' : '#374151',
-          color:      color === 'white' ? '#1f2937' : '#f9fafb',
-        }}
+        style={avatarStyle}
       >
-        {initial}
+        {isComputer ? '♟' : initial}
       </div>
       <span className="text-sm font-semibold flex-1 truncate" style={{ color: 'var(--t-text)' }}>{name}</span>
       {thinking && (

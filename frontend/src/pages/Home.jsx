@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { analyzeGameStream } from '../utils/api.js';
 
-const ANALYSIS_DEPTH = 12; // baked-in, not exposed to user
+const ANALYSIS_DEPTH = 11;
 
 const EXAMPLE_PGN = `[Event "Example"]
 [White "Magnus Carlsen"]
@@ -82,7 +82,7 @@ export default function Home() {
           Chess Analyzer
         </h1>
         <p className="text-lg max-w-md" style={{ color: 'var(--t-muted)' }}>
-          Analyze any chess game with Stockfish 18 — move classifications,
+          Analyze any chess game with Stockfish 18 - move classifications,
           accuracy scores, and full evaluation graph.
         </p>
       </div>

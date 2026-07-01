@@ -1,16 +1,22 @@
 /** Shared chess utility constants and helpers. */
 
 export const CLASSIFICATION_META = {
-  Brilliant:  { symbol: '!!', color: '#1bada6', tailwind: 'bg-teal-500',      label: 'Brilliant' },
-  Best:       { symbol: '★',  color: '#00a67e', tailwind: 'bg-emerald-600',   label: 'Best' },
-  Excellent:  { symbol: '!',  color: '#96bc4b', tailwind: 'bg-lime-500',      label: 'Excellent' },
-  Good:       { symbol: '⊕',  color: '#96bc4b', tailwind: 'bg-lime-400',      label: 'Good' },
-  Inaccuracy: { symbol: '?!', color: '#f0c15f', tailwind: 'bg-yellow-400',    label: 'Inaccuracy' },
-  Mistake:    { symbol: '?',  color: '#e08030', tailwind: 'bg-orange-500',    label: 'Mistake' },
-  Blunder:    { symbol: '??', color: '#ca3431', tailwind: 'bg-red-600',       label: 'Blunder' },
+  Brilliant:  { symbol: '!!', color: '#1bada6', label: 'Brilliant' },
+  Great:      { symbol: '!',  color: '#4b88e3', label: 'Great'     },
+  Book:       { symbol: '📖', color: '#c8a066', label: 'Book'      },
+  Best:       { symbol: '★',  color: '#00a67e', label: 'Best'      },
+  Excellent:  { symbol: '✦',  color: '#96bc4b', label: 'Excellent' },
+  Good:       { symbol: '✓',  color: '#7fc37e', label: 'Good'      },
+  Inaccuracy: { symbol: '?!', color: '#f0c15f', label: 'Inaccuracy'},
+  Mistake:    { symbol: '?',  color: '#e08030', label: 'Mistake'   },
+  Miss:       { symbol: '✗',  color: '#c4707a', label: 'Miss'      },
+  Blunder:    { symbol: '??', color: '#ca3431', label: 'Blunder'   },
 };
 
-export const ORDER = ['Brilliant', 'Best', 'Excellent', 'Good', 'Inaccuracy', 'Mistake', 'Blunder'];
+export const ORDER = [
+  'Brilliant', 'Great', 'Book', 'Best', 'Excellent',
+  'Good', 'Inaccuracy', 'Mistake', 'Miss', 'Blunder',
+];
 
 /**
  * Parse a UCI move string (e.g. "e2e4") into [from, to] square strings.
@@ -29,7 +35,7 @@ export function formatEval(evalCp) {
   if (evalCp === null || evalCp === undefined) return '0.0';
   const abs = Math.abs(evalCp);
   if (abs >= 100_000) {
-    const mateIn = abs - 99_000;   // not an exact formula—just display
+    const mateIn = abs - 99_000;
     return `M${evalCp > 0 ? '' : '-'}${mateIn}`;
   }
   const pawns = (evalCp / 100).toFixed(1);

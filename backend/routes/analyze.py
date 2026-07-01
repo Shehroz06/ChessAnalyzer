@@ -10,7 +10,8 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, List, Optional
 from urllib.parse import parse_qs, urlparse
 
 import chess
@@ -22,6 +23,8 @@ from pydantic import BaseModel
 
 from analyzer import analyze_game
 from engine import engine_manager
+
+_OLLAMA_BASE = "http://localhost:11434"
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -64,6 +67,18 @@ class AnalyzePositionRequest(BaseModel):
     multipv: int = 3
 
 
+class CommentaryRequest(BaseModel):
+    fen_before:     str
+    move_san:       str
+    move_uci:       str
+    classification: str
+    cp_loss:        float
+    best_move:      Optional[str]  = None
+    pv_san:         List[str]      = []
+    player:         str            = "white"
+    is_sacrifice:   bool           = False
+
+
 # ── URL helpers ───────────────────────────────────────────────────────────────
 
 def _parse_chess_com_url(url: str) -> tuple[Optional[str], Optional[str]]:
@@ -92,30 +107,56 @@ def _parse_chess_com_url(url: str) -> tuple[Optional[str], Optional[str]]:
 
 # ── player archive helpers ────────────────────────────────────────────────────
 
-async def _search_archive_month(
+async def _search_archive_url(
     client: httpx.AsyncClient,
-    username: str,
-    year: str,
-    month: str,
+    archive_url: str,
     game_id: str,
     uuid: str = "",
 ) -> Optional[str]:
-    """Search one month's archive for a specific game, returning its PGN."""
+    """Fetch one archive URL and search it for the game. Returns PGN or None."""
     try:
-        r = await client.get(
-            f"https://api.chess.com/pub/player/{username}/games/{year}/{month}",
-            headers=_API_HEADERS,
-            timeout=30,
-        )
+        r = await client.get(archive_url, headers=_API_HEADERS, timeout=20)
         if r.status_code != 200:
             return None
         for g in r.json().get("games", []):
             g_url = g.get("url", "")
             if (uuid and g.get("uuid") == uuid) or re.search(rf"/{game_id}([/?]|$)", g_url):
-                if g.get("pgn", "").strip():
-                    return g["pgn"]
+                pgn = g.get("pgn", "").strip()
+                if pgn:
+                    logger.info("Game %s found at %s", game_id, archive_url)
+                    return pgn
     except Exception as exc:
-        logger.debug("Archive %s/%s/%s: %s", username, year, month, exc)
+        logger.debug("Archive %s: %s", archive_url, exc)
+    return None
+
+
+async def _search_recent_months(
+    client: httpx.AsyncClient,
+    username: str,
+    game_id: str,
+    uuid: str = "",
+    n_months: int = 3,
+) -> Optional[str]:
+    """
+    Check the current month and the previous n_months-1 months in parallel.
+    Returns the PGN as soon as any month contains the game, otherwise None.
+    """
+    now = datetime.now(timezone.utc)
+    urls = []
+    for i in range(n_months):
+        d = now.replace(day=1) - timedelta(days=1) * (30 * i)
+        d = d.replace(day=1)
+        urls.append(
+            f"https://api.chess.com/pub/player/{username}/games/{d.year}/{d.month:02d}"
+        )
+
+    results = await asyncio.gather(
+        *[_search_archive_url(client, u, game_id, uuid) for u in urls],
+        return_exceptions=True,
+    )
+    for r in results:
+        if isinstance(r, str) and r:
+            return r
     return None
 
 
@@ -124,41 +165,35 @@ async def _search_all_archives(
     username: str,
     game_id: str,
     uuid: str = "",
-    max_months: int = 12,
+    max_months: int = 6,
 ) -> Optional[str]:
     """
-    Fetch the player's archive index and search the most recent months.
-    Searches newest-first so recent games are found quickly.
+    Fetch the archive index then search recent months in parallel.
     """
     try:
         r = await client.get(
             f"https://api.chess.com/pub/player/{username}/games/archives",
             headers=_API_HEADERS,
-            timeout=15,
+            timeout=12,
         )
         if r.status_code != 200:
-            logger.debug("Archives list for %s: HTTP %s", username, r.status_code)
             return None
         archives: list[str] = r.json().get("archives", [])
     except Exception as exc:
         logger.debug("Archives list for %s failed: %s", username, exc)
         return None
 
-    for archive_url in reversed(archives[-max_months:]):
-        # archive_url looks like: https://api.chess.com/pub/player/user/games/2026/06
-        try:
-            r = await client.get(archive_url, headers=_API_HEADERS, timeout=30)
-            if r.status_code != 200:
-                continue
-            for g in r.json().get("games", []):
-                g_url = g.get("url", "")
-                if (uuid and g.get("uuid") == uuid) or re.search(rf"/{game_id}([/?]|$)", g_url):
-                    if g.get("pgn", "").strip():
-                        logger.info("Game %s found in archive %s", game_id, archive_url)
-                        return g["pgn"]
-        except Exception as exc:
-            logger.debug("Archive %s: %s", archive_url, exc)
+    if not archives:
+        return None
 
+    recent = list(reversed(archives[-max_months:]))
+    results = await asyncio.gather(
+        *[_search_archive_url(client, u, game_id, uuid) for u in recent],
+        return_exceptions=True,
+    )
+    for r in results:
+        if isinstance(r, str) and r:
+            return r
     return None
 
 
@@ -277,34 +312,37 @@ async def _fetch_pgn(game_id: str, username_hint: Optional[str] = None) -> str:
     """
     Multi-strategy PGN fetcher for Chess.com live and daily games.
 
-    Strategy 1  — Official daily-game API  (fast, works for correspondence games)
-    Strategy 1b — Player archive via username_hint  (when the URL has ?username=)
-    Strategy 2  — Callback API → 2a archive search → 2b moveList decode
-    Strategy 3  — HTML scraping (last resort)
+    Strategies run in order of speed, with parallelism where possible:
+
+    Fast (parallel race):
+      1a — Official pub/game API  (daily/correspondence games)
+      1b — Recent-month archive   (current + last 2 months, parallel)
+
+    Slow fallback (sequential):
+      2  — Callback API → known-date archive → moveList decode
+      3  — Full archive index search (parallel across recent 6 months)
+      4  — HTML scraping
     """
     async with httpx.AsyncClient(follow_redirects=True, timeout=25) as client:
 
-        # ── Strategy 1 — official API (daily / correspondence) ────────────────
-        try:
-            r = await client.get(
-                f"https://api.chess.com/pub/game/{game_id}", headers=_API_HEADERS
+        # ── Fast parallel race: official API + recent archive months ──────────
+        fast_tasks: list = [
+            asyncio.create_task(
+                _official_api(client, game_id)
             )
-            if r.status_code == 200:
-                pgn = r.json().get("pgn", "").strip()
-                if pgn:
-                    logger.info("Game %s: fetched via official API", game_id)
-                    return pgn
-        except Exception as exc:
-            logger.debug("Strategy 1 failed: %s", exc)
-
-        # ── Strategy 1b — archive search using URL's ?username= hint ──────────
-        # Chess.com adds ?username=XYZ to game links from a player's profile.
-        # Use that to jump straight to the correct player's archive.
+        ]
         if username_hint:
-            logger.info("Game %s: searching archive of hint user %s", game_id, username_hint)
-            pgn = await _search_all_archives(client, username_hint, game_id, max_months=24)
-            if pgn:
-                return pgn
+            fast_tasks.append(
+                asyncio.create_task(
+                    _search_recent_months(client, username_hint, game_id, n_months=3)
+                )
+            )
+
+        fast_results = await asyncio.gather(*fast_tasks, return_exceptions=True)
+        for r in fast_results:
+            if isinstance(r, str) and r:
+                logger.info("Game %s: found via fast path", game_id)
+                return r
 
         # ── Strategy 2 — Callback API (live games) ────────────────────────────
         callback_data: Optional[dict] = None
@@ -332,9 +370,9 @@ async def _fetch_pgn(game_id: str, username_hint: Optional[str] = None) -> str:
                 or chess.STARTING_FEN
             )
 
-            # ── 2a — archive search (uses known date + all player usernames) ──
+            # ── 2a — archive search (known date + all usernames, parallel) ───
             usernames: list[str] = []
-            if username_hint and username_hint not in usernames:
+            if username_hint:
                 usernames.append(username_hint)
             for side in ("top", "bottom"):
                 u = players.get(side, {}).get("username", "")
@@ -343,11 +381,21 @@ async def _fetch_pgn(game_id: str, username_hint: Optional[str] = None) -> str:
 
             if date_str and len(date_str) >= 7:
                 year, month = date_str[:4], date_str[5:7]
-                for uname in usernames:
-                    pgn = await _search_archive_month(client, uname, year, month, game_id, uuid)
-                    if pgn:
-                        logger.info("Game %s: found in %s archive %s/%s", game_id, uname, year, month)
-                        return pgn
+                archive_tasks = [
+                    _search_archive_url(
+                        client,
+                        f"https://api.chess.com/pub/player/{uname}/games/{year}/{month}",
+                        game_id,
+                        uuid,
+                    )
+                    for uname in usernames
+                ]
+                if archive_tasks:
+                    archive_results = await asyncio.gather(*archive_tasks, return_exceptions=True)
+                    for r in archive_results:
+                        if isinstance(r, str) and r:
+                            logger.info("Game %s: found via callback+archive", game_id)
+                            return r
 
             # ── 2b — decode Chess.com proprietary moveList ────────────────────
             if movelist and pgn_hdrs:
@@ -356,7 +404,22 @@ async def _fetch_pgn(game_id: str, username_hint: Optional[str] = None) -> str:
                 if pgn:
                     return pgn
 
-        # ── Strategy 3 — HTML scraping ────────────────────────────────────────
+        # ── Strategy 3 — full archive index search (parallel) ────────────────
+        all_usernames: list[str] = []
+        if username_hint:
+            all_usernames.append(username_hint)
+        if callback_data:
+            for side in ("top", "bottom"):
+                u = callback_data.get("players", {}).get(side, {}).get("username", "")
+                if u and u.lower() not in [x.lower() for x in all_usernames]:
+                    all_usernames.append(u)
+
+        for uname in all_usernames:
+            pgn = await _search_all_archives(client, uname, game_id, max_months=6)
+            if pgn:
+                return pgn
+
+        # ── Strategy 4 — HTML scraping ────────────────────────────────────────
         for path in (f"game/live/{game_id}", f"game/daily/{game_id}"):
             try:
                 r = await client.get(
@@ -379,6 +442,21 @@ async def _fetch_pgn(game_id: str, username_hint: Optional[str] = None) -> str:
             "then paste it using the 'Paste PGN' tab."
         ),
     )
+
+
+async def _official_api(client: httpx.AsyncClient, game_id: str) -> Optional[str]:
+    """Try the official pub/game API (works for daily/correspondence games)."""
+    try:
+        r = await client.get(
+            f"https://api.chess.com/pub/game/{game_id}", headers=_API_HEADERS, timeout=10
+        )
+        if r.status_code == 200:
+            pgn = r.json().get("pgn", "").strip()
+            if pgn:
+                return pgn
+    except Exception as exc:
+        logger.debug("Official API failed: %s", exc)
+    return None
 
 
 # ── shared PGN resolver ───────────────────────────────────────────────────────
@@ -482,3 +560,61 @@ async def analyze_position_route(req: AnalyzePositionRequest):
     except Exception as exc:
         logger.exception("Position analysis failed")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+async def _get_ollama_model(client: httpx.AsyncClient) -> Optional[str]:
+    """Return the first available Ollama model name, or None if Ollama is not running."""
+    try:
+        r = await client.get(f"{_OLLAMA_BASE}/api/tags", timeout=3)
+        if r.status_code == 200:
+            models = r.json().get("models", [])
+            if models:
+                # Prefer llama models, then any model
+                for m in models:
+                    name = m.get("name", "")
+                    if "llama" in name.lower():
+                        return name
+                return models[0].get("name")
+    except Exception:
+        pass
+    return None
+
+
+@router.post("/commentary")
+async def generate_commentary(req: CommentaryRequest):
+    """
+    Generate AI commentary for a chess move using a local Ollama model.
+    Falls back to a brief template message if Ollama is not available.
+    """
+    is_good = req.classification in ("Brilliant", "Best", "Excellent", "Good")
+    prompt = (
+        f"You are a chess coach. Explain in 2-3 plain sentences (no markdown, no bullet points) "
+        f"why {req.move_san} by {'White' if req.player == 'white' else 'Black'} "
+        f"is a {req.classification} move. "
+        f"{'It involves a material sacrifice. ' if req.is_sacrifice else ''}"
+        f"{'The stronger option was ' + req.best_move + '. ' if req.best_move and req.best_move != req.move_san else ''}"
+        f"{'The best continuation runs: ' + ' '.join(req.pv_san[:4]) + '. ' if req.pv_san else ''}"
+        f"Focus on the {'key tactical or positional strength' if is_good else 'concrete tactical or positional problem this creates'} "
+        f"without mentioning centipawns or numeric scores."
+    )
+
+    async with httpx.AsyncClient() as client:
+        model = await _get_ollama_model(client)
+        if not model:
+            raise HTTPException(
+                status_code=503,
+                detail="Ollama is not running. Start it with: ollama serve",
+            )
+
+        try:
+            r = await client.post(
+                f"{_OLLAMA_BASE}/api/generate",
+                json={"model": model, "prompt": prompt, "stream": False},
+                timeout=30,
+            )
+            if r.status_code != 200:
+                raise HTTPException(status_code=502, detail="Ollama returned an error")
+            commentary = r.json().get("response", "").strip()
+            return {"commentary": commentary, "model": model}
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=504, detail="Ollama timed out generating commentary")
