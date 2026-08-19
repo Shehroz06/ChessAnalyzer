@@ -237,7 +237,7 @@ export default function AnalysisPage() {
   const topCounts = topColor  === 'white' ? analysisData?.counts_white   : analysisData?.counts_black;
   const btmCounts = btmColor  === 'white' ? analysisData?.counts_white   : analysisData?.counts_black;
 
-  /* ── AI commentary (Ollama) ──────────────────────────────────────────── */
+  /* ── AI commentary (Gemini, falls back to Ollama) ─────────────────────── */
   async function fetchAiCommentary() {
     if (!current) return;
     setAiLoading(true);
@@ -261,7 +261,7 @@ export default function AnalysisPage() {
       const data = await resp.json();
       setAiCommentary(data.commentary);
     } catch {
-      toast.error('AI commentary unavailable. Is Ollama running?');
+      toast.error('AI commentary unavailable. Set GEMINI_API_KEY or run: ollama serve');
     } finally {
       setAiLoading(false);
     }

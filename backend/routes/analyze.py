@@ -9,7 +9,9 @@ POST /api/analyze-position     – single-position analysis by FEN
 import asyncio
 import json
 import logging
+import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
 from urllib.parse import parse_qs, urlparse
@@ -25,6 +27,12 @@ from analyzer import analyze_game
 from engine import engine_manager
 
 _OLLAMA_BASE = "http://localhost:11434"
+_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+_GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+_GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest").strip()
+_GEMINI_ENABLED = os.environ.get("GEMINI_ENABLED", "true").strip().lower() == "true"
+_GEMINI_MAX_RPM = int(os.environ.get("GEMINI_MAX_RPM", "15"))
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -580,11 +588,61 @@ async def _get_ollama_model(client: httpx.AsyncClient) -> Optional[str]:
     return None
 
 
+# Sliding-window request timestamps used to stay under GEMINI_MAX_RPM.
+_gemini_request_times: List[float] = []
+
+
+def _gemini_rate_limit_ok() -> bool:
+    """True and reserves a slot if under GEMINI_MAX_RPM requests in the last 60s."""
+    now = time.monotonic()
+    cutoff = now - 60
+    while _gemini_request_times and _gemini_request_times[0] < cutoff:
+        _gemini_request_times.pop(0)
+    if len(_gemini_request_times) >= _GEMINI_MAX_RPM:
+        return False
+    _gemini_request_times.append(now)
+    return True
+
+
+async def _call_gemini(client: httpx.AsyncClient, prompt: str) -> Optional[str]:
+    """Return Gemini's response text, or None if unavailable/disabled/rate-limited/erroring."""
+    if not (_GEMINI_ENABLED and _GEMINI_API_KEY):
+        return None
+    if not _gemini_rate_limit_ok():
+        logger.info("Gemini rate limit reached (%d rpm) — falling back to Ollama", _GEMINI_MAX_RPM)
+        return None
+
+    try:
+        r = await client.post(
+            f"{_GEMINI_BASE}/models/{_GEMINI_MODEL}:generateContent",
+            params={"key": _GEMINI_API_KEY},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            logger.warning("Gemini returned %s: %s", r.status_code, r.text[:200])
+            return None
+        candidates = r.json().get("candidates", [])
+        if not candidates:
+            return None
+        parts = candidates[0].get("content", {}).get("parts", [])
+        text = "".join(p.get("text", "") for p in parts).strip()
+        return text or None
+    except httpx.TimeoutException:
+        logger.warning("Gemini timed out generating commentary")
+        return None
+    except Exception:
+        logger.exception("Gemini request failed")
+        return None
+
+
 @router.post("/commentary")
 async def generate_commentary(req: CommentaryRequest):
     """
-    Generate AI commentary for a chess move using a local Ollama model.
-    Falls back to a brief template message if Ollama is not available.
+    Generate AI commentary for a chess move.
+    Tries Gemini first (if GEMINI_API_KEY is set), falls back to a local Ollama
+    model if Gemini is disabled, rate-limited, or errors. Returns 503 if neither
+    provider is available — the frontend falls back to template commentary.
     """
     is_good = req.classification in ("Brilliant", "Best", "Excellent", "Good")
     prompt = (
@@ -599,11 +657,16 @@ async def generate_commentary(req: CommentaryRequest):
     )
 
     async with httpx.AsyncClient() as client:
+        gemini_text = await _call_gemini(client, prompt)
+        if gemini_text:
+            return {"commentary": gemini_text, "model": _GEMINI_MODEL, "provider": "gemini"}
+
         model = await _get_ollama_model(client)
         if not model:
             raise HTTPException(
                 status_code=503,
-                detail="Ollama is not running. Start it with: ollama serve",
+                detail="No AI commentary provider available. Set GEMINI_API_KEY in backend/.env, "
+                       "or start a local fallback with: ollama serve",
             )
 
         try:
@@ -615,6 +678,6 @@ async def generate_commentary(req: CommentaryRequest):
             if r.status_code != 200:
                 raise HTTPException(status_code=502, detail="Ollama returned an error")
             commentary = r.json().get("response", "").strip()
-            return {"commentary": commentary, "model": model}
+            return {"commentary": commentary, "model": model, "provider": "ollama"}
         except httpx.TimeoutException:
             raise HTTPException(status_code=504, detail="Ollama timed out generating commentary")

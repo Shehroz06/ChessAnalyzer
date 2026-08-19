@@ -16,7 +16,7 @@ A full-stack chess analysis web app powered by **Stockfish 18**, replicating che
 - **Opening detection** — ECO code + opening name from PGN headers
 - **Play vs computer** — adjustable difficulty from Beginner to Master
 - **Post-game review** — full Stockfish analysis after any play-vs-computer game
-- **AI commentary** — optional natural-language move explanations via local Ollama (Llama)
+- **AI commentary** — optional natural-language move explanations via Gemini, with local Ollama (Llama) as an offline fallback
 
 ---
 
@@ -30,6 +30,16 @@ A full-stack chess analysis web app powered by **Stockfish 18**, replicating che
 ---
 
 ## Quick Start
+
+Fastest path — one script installs deps (first run only) and starts both servers:
+
+```bash
+./run.sh
+```
+
+Backend → http://localhost:8000 · Frontend → http://localhost:5173 · Ctrl+C stops both. Still needs Stockfish installed (below) and, optionally, `GEMINI_API_KEY` set in `backend/.env` for AI commentary.
+
+For manual setup or more control, follow the steps below.
 
 ### 1. Install Stockfish
 
@@ -75,11 +85,28 @@ npm run dev
 
 ---
 
-### 4. (Optional) AI Commentary via Ollama
+### 4. (Optional) AI Commentary — Gemini, with local Ollama fallback
 
-The app can generate natural-language move commentary using a locally running Llama model. Without Ollama the app works fine — commentary falls back to built-in template descriptions.
+The app can generate natural-language move commentary. It tries providers in order and degrades gracefully:
 
-**Install Ollama**
+1. **Gemini** (primary, cloud) — used if `GEMINI_API_KEY` is set and `GEMINI_ENABLED=true`
+2. **Ollama** (fallback, local) — used automatically if Gemini is disabled, has no key, is rate-limited, or errors
+3. **Template commentary** (always available) — the frontend's built-in descriptions if neither AI provider responds
+
+#### Gemini setup
+
+1. Get a free API key at https://aistudio.google.com/apikey
+2. Add it to `backend/.env`:
+   ```bash
+   GEMINI_API_KEY=your-key-here
+   GEMINI_MODEL=gemini-flash-lite-latest
+   GEMINI_ENABLED=true
+   GEMINI_MAX_RPM=15
+   ```
+
+No restart needed to switch providers — each `/api/commentary` request re-checks Gemini's config and falls back live.
+
+#### Ollama setup (fallback / offline use)
 
 ```bash
 # Ubuntu / Debian / WSL
@@ -116,7 +143,7 @@ The backend auto-detects Ollama on each request — no restart needed. In the ap
 2. Paste a Chess.com game URL or raw PGN
 3. Click **Analyze Game**
 4. Navigate moves with ← → arrow keys or by clicking the move list
-5. Click **Get AI Commentary** on any move for a deeper explanation (requires Ollama)
+5. Click **Get AI Commentary** on any move for a deeper explanation (requires Gemini or Ollama)
 
 ### Play vs Computer
 1. Click **Play vs Computer** in the navbar
@@ -134,6 +161,7 @@ Chess/
 ├── README.md
 ├── LICENSE
 ├── .gitignore
+├── run.sh                          # One-click launcher (installs deps, starts backend + frontend)
 ├── images/
 │   └── home.png                    # App screenshot
 │
@@ -144,8 +172,8 @@ Chess/
 │   ├── requirements.txt
 │   ├── .env.example                # Environment variable template
 │   └── routes/
-│       ├── analyze.py              # POST /analyze-game-stream · /analyze-position · /commentary
-│       └── play.py                 # POST /play-move · /evaluate
+│       ├── analyze.py              # POST /analyze-game · /analyze-game-stream · /analyze-position · /commentary
+│       └── play.py                 # POST /play-move · /evaluate · WS /ws/eval
 │
 └── frontend/
     ├── index.html
@@ -215,4 +243,10 @@ Book moves are excluded from the accuracy calculation (they are opening theory, 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `STOCKFISH_PATH` | auto-detected | Full path to the Stockfish binary |
-| `ANALYSIS_DEPTH` | `15` | Engine search depth (18–20 for deeper analysis) |
+| `PORT` | `8000` | Backend server port |
+| `GEMINI_API_KEY` | *(empty)* | API key for Gemini commentary (primary provider). Leave empty to skip straight to Ollama/template |
+| `GEMINI_MODEL` | `gemini-flash-lite-latest` | Gemini model used for move commentary |
+| `GEMINI_ENABLED` | `true` | Set `false` to disable Gemini and always use the Ollama/template fallback |
+| `GEMINI_MAX_RPM` | `15` | Max Gemini requests per minute before requests fall back to Ollama |
+
+Engine search depth isn't set via env var — it's a per-request API parameter (`depth`, API default `15`). The frontend's **Analyze Game** flow requests depth `11` for speed; **Play vs Computer** review requests depth `14`–`15` depending on the call.
