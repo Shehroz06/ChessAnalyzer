@@ -226,9 +226,26 @@ export default function PlayPage() {
   const arrows    = showHint && hintArrow ? [[hintArrow[0], hintArrow[1], '#00a67e']] : [];
   const compColor = playerColor === 'white' ? 'black' : 'white';
 
+  function goHome() {
+    if (phase === 'playing' && !window.confirm('Leave this game? Your progress will be lost.')) return;
+    navigate('/');
+  }
+
   /* ── render ──────────────────────────────────────────────────────────── */
   return (
     <div className="min-h-[calc(100vh-56px)]" style={{ background: 'var(--t-bg)' }}>
+      <div className="px-4 pt-4 lg:px-6 lg:pt-5">
+        <button
+          onClick={goHome}
+          title="Back to Home"
+          className="inline-flex items-center gap-1.5 text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors"
+          style={{ color: 'var(--t-green)' }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(93,185,70,0.12)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          ← Home
+        </button>
+      </div>
       <div className="flex flex-col lg:flex-row lg:items-start lg:justify-center gap-3 p-3 lg:p-4">
 
       {/* ── BOARD COLUMN ───────────────────────────────────────────────── */}
